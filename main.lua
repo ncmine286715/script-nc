@@ -1,248 +1,360 @@
 --[[
-    NCHub Lite – Feito por NCMine
-    Funcionalidades: Kill Aura, Auto Fruit, Auto Raid
-    Versão otimizada para mobile (Delta)
+    NCHub – Raid Farm + Auto Mob Farm
+    Feito por NCMine
+    Funciona com qualquer executor (Delta mobile)
 ]]
 
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
 -- ========== CONFIGURAÇÕES ==========
 local Settings = {
-    KillAura = false,
-    KillAuraRange = 150,
-    KillAuraDelay = 0.1,
-    AutoFruit = false,
-    AutoRaid = false,
-    RaidType = "Flame",
+    -- Raid
+    RaidFarm = false,
+    BuddhaMode = false,
+    
+    -- Mob Farm
+    MobFarm = false,
+    SelectedIsland = "Marinha",  -- nome padrão
+    MobRange = 100,
+    MobDelay = 0.1,
+    TeleportOnStart = true,
 }
 
 -- ========== SERVIÇOS ==========
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
 
--- ========== FUNÇÕES AUXILIARES ==========
+-- ========== COORDENADAS DAS ILHAS ==========
+local Islands = {
+    -- Primeiro Mar
+    {"Marinha", Vector3.new(-790, 80, -1260)},
+    {"Deserto", Vector3.new(1020, 125, 1240)},
+    {"Jungla", Vector3.new(-1200, 50, 500)},
+    {"Ilha do Céu", Vector3.new(-5000, 300, -2000)},
+    {"Ilha do Tesouro", Vector3.new(2000, 50, 3000)},
+    
+    -- Segundo Mar
+    {"Ilha do Cemitério", Vector3.new(-3000, 50, 4000)},
+    {"Ilha da Neve", Vector3.new(-4000, 100, -1000)},
+    {"Ilha do Café", Vector3.new(-2000, 50, -3000)},
+    {"Ilha da Fábrica", Vector3.new(0, 50, -4000)},
+    {"Ilha do Trono", Vector3.new(3000, 150, 2000)},
+    
+    -- Terceiro Mar
+    {"Castelo", Vector3.new(5000, 200, 5000)},
+    {"Ilha das Almas", Vector3.new(6000, 100, 6000)},
+    {"Ilha do Dragão", Vector3.new(7000, 150, 7000)},
+    {"Ilha dos Espelhos", Vector3.new(8000, 200, 8000)},
+    {"Zona Neutra", Vector3.new(4000, 100, 4000)},
+    
+    -- Ilhas de nível
+    {"Mobs Nv 1", Vector3.new(-100, 50, 0)},
+    {"Mobs Nv 100", Vector3.new(500, 50, 500)},
+    {"Mobs Nv 500", Vector3.new(1000, 50, 1000)},
+    {"Mobs Nv 1000", Vector3.new(2000, 50, 2000)},
+    {"Mobs Nv 2000", Vector3.new(3000, 100, 3000)},
+}
 
--- Encontra o mob mais próximo dentro do alcance
-local function GetNearestMob()
+-- ========== FUNÇÕES GERAIS ==========
+
+-- Teleportar para coordenadas
+local function TeleportTo(pos)
     local character = LocalPlayer.Character
-    if not character then return nil end
-    local rootPart = character:FindFirstChild("HumanoidRootPart")
-    if not rootPart then return nil end
+    if character and character:FindFirstChild("HumanoidRootPart") then
+        character.HumanoidRootPart.CFrame = CFrame.new(pos)
+        return true
+    end
+    return false
+end
 
-    local nearest = nil
-    local minDist = math.huge
+-- Encontrar mobs próximos (opcional: ignorar boss)
+local function GetNearbyMobs(range, ignoreBoss)
+    local character = LocalPlayer.Character
+    if not character then return {} end
+    local root = character:FindFirstChild("HumanoidRootPart")
+    if not root then return {} end
 
+    local mobs = {}
     for _, v in ipairs(workspace:GetDescendants()) do
         if v:IsA("Model") and v:FindFirstChild("Humanoid") and v.Humanoid.Health > 0 then
+            -- Ignorar o próprio jogador
+            if v == character then continue end
+            -- Se ignoreBoss for true, pular mobs que parecem boss
+            if ignoreBoss and (v.Name:lower():find("boss") or v:FindFirstChild("Boss")) then
+                continue
+            end
             local hrp = v:FindFirstChild("HumanoidRootPart")
             if hrp then
-                local dist = (hrp.Position - rootPart.Position).Magnitude
-                if dist < minDist and dist <= Settings.KillAuraRange then
-                    nearest = v
-                    minDist = dist
+                local dist = (hrp.Position - root.Position).Magnitude
+                if dist <= range then
+                    table.insert(mobs, v)
                 end
             end
         end
     end
-    return nearest
+    return mobs
 end
 
--- Ataca o alvo usando a arma equipada
+-- Atacar alvo (usa a ferramenta equipada)
 local function AttackTarget(target)
     if not target then return end
-
     local character = LocalPlayer.Character
     if not character then return end
 
-    -- Aproxima-se do alvo
-    local rootPart = character:FindFirstChild("HumanoidRootPart")
+    -- Aproximar-se
+    local root = character:FindFirstChild("HumanoidRootPart")
     local targetRoot = target:FindFirstChild("HumanoidRootPart")
-    if rootPart and targetRoot then
-        rootPart.CFrame = targetRoot.CFrame * CFrame.new(0, 0, 3)
+    if root and targetRoot then
+        root.CFrame = targetRoot.CFrame * CFrame.new(0, 0, 3)
     end
 
-    -- Procura a ferramenta (arma) equipada
+    -- Encontrar ferramenta ativa
     local tool = character:FindFirstChildOfClass("Tool")
     if tool then
-        -- Ativa a ferramenta (simula o clique)
         tool:Activate()
     end
 end
 
--- Encontra a fruta mais próxima
-local function GetNearestFruit()
-    local character = LocalPlayer.Character
-    if not character then return nil end
-    local rootPart = character:FindFirstChild("HumanoidRootPart")
-    if not rootPart then return nil end
+-- ========== RAID FARM (já existente) ==========
 
-    local nearest = nil
-    local minDist = math.huge
+-- Verificar se está dentro de uma raid
+local function IsInRaid()
+    return workspace:FindFirstChild("Raid") ~= nil
+end
 
+-- Encontrar boss da raid (para modo Buda)
+local function GetRaidBoss()
     for _, v in ipairs(workspace:GetDescendants()) do
-        if v:IsA("Model") and v:FindFirstChild("Handle") then
-            if v.Name:find("Fruit") then
-                local fruitPart = v:FindFirstChild("Handle") or v:FindFirstChild("PrimaryPart")
-                if fruitPart then
-                    local dist = (fruitPart.Position - rootPart.Position).Magnitude
-                    if dist < minDist and dist <= 100 then -- alcance fixo para frutas
-                        nearest = v
-                        minDist = dist
-                    end
-                end
+        if v:IsA("Model") and v:FindFirstChild("Humanoid") then
+            if v.Name:lower():find("buddha") or v.Name:lower():find("boss") then
+                return v
             end
         end
     end
-    return nearest
+    return nil
 end
 
--- Coleta a fruta (teleporta e espera)
-local function CollectFruit(fruit)
-    if not fruit then return end
-    local character = LocalPlayer.Character
-    if not character then return end
-
-    local rootPart = character:FindFirstChild("HumanoidRootPart")
-    local fruitPart = fruit:FindFirstChild("Handle") or fruit:FindFirstChild("PrimaryPart")
-    if rootPart and fruitPart then
-        -- Teleporta em cima da fruta
-        rootPart.CFrame = fruitPart.CFrame * CFrame.new(0, 2, 0)
-        -- Aguarda um pouco para o jogo registrar a coleta
-        task.wait(0.5)
-        -- Opcional: simular um movimento para garantir
-        rootPart.CFrame = fruitPart.CFrame
-    end
-end
-
--- ========== LOOPS ==========
-
--- Kill Aura loop
-local function KillAuraLoop()
-    while Settings.KillAura do
-        local target = GetNearestMob()
-        if target then
-            AttackTarget(target)
+-- Modo Buda (ficar na cabeça do boss)
+local function BuddhaModeLoop()
+    while Settings.RaidFarm and Settings.BuddhaMode do
+        local boss = GetRaidBoss()
+        if boss then
+            local character = LocalPlayer.Character
+            if character then
+                local root = character:FindFirstChild("HumanoidRootPart")
+                local bossHead = boss:FindFirstChild("Head") or boss:FindFirstChild("HumanoidRootPart")
+                if root and bossHead then
+                    root.CFrame = bossHead.CFrame * CFrame.new(0, 3, 0)
+                end
+            end
         end
-        task.wait(Settings.KillAuraDelay)
-    end
-end
-
--- Auto Fruit loop
-local function AutoFruitLoop()
-    while Settings.AutoFruit do
-        local fruit = GetNearestFruit()
-        if fruit then
-            CollectFruit(fruit)
+        local mobs = GetNearbyMobs(50, true)  -- ignora boss
+        for _, mob in ipairs(mobs) do
+            AttackTarget(mob)
+            task.wait(0.1)
         end
-        task.wait(0.5)
+        task.wait(0.1)
     end
 end
 
--- Auto Raid loop
-local function AutoRaidLoop()
-    while Settings.AutoRaid do
-        -- Inicia a raid
-        local success, err = pcall(function()
-            ReplicatedStorage.Remotes.CommF_:InvokeServer("Raids", "Start", Settings.RaidType)
-        end)
-        if not success then
-            warn("Erro ao iniciar raid: " .. tostring(err))
+-- Modo normal na raid
+local function NormalRaidFarmLoop()
+    while Settings.RaidFarm and not Settings.BuddhaMode do
+        local mobs = GetNearbyMobs(50, false)
+        for _, mob in ipairs(mobs) do
+            AttackTarget(mob)
+            task.wait(0.1)
         end
-        -- Aguarda antes de tentar novamente
-        task.wait(30) -- espera 30 segundos antes de tentar outra raid
+        task.wait(0.1)
     end
 end
 
--- ========== CONSTRUÇÃO DA UI ==========
+local function RaidFarmLoop()
+    while Settings.RaidFarm do
+        if not IsInRaid() then
+            task.wait(1)
+            continue
+        end
+        if Settings.BuddhaMode then
+            BuddhaModeLoop()
+        else
+            NormalRaidFarmLoop()
+        end
+        task.wait()
+    end
+end
+
+-- ========== AUTO MOB FARM (novo) ==========
+
+-- Função principal do Auto Mob Farm
+local function MobFarmLoop()
+    -- Se TeleportOnStart estiver ativo, teleporta para a ilha selecionada
+    if Settings.TeleportOnStart then
+        local coord = nil
+        for _, island in ipairs(Islands) do
+            if island[1] == Settings.SelectedIsland then
+                coord = island[2]
+                break
+            end
+        end
+        if coord then
+            TeleportTo(coord)
+            Rayfield:Notify({
+                Title = "Auto Mob Farm",
+                Content = "Teleportado para " .. Settings.SelectedIsland,
+                Duration = 2
+            })
+            task.wait(2) -- aguarda estabilizar
+        end
+    end
+
+    -- Loop principal
+    while Settings.MobFarm do
+        local mobs = GetNearbyMobs(Settings.MobRange, false)
+        if #mobs > 0 then
+            for _, mob in ipairs(mobs) do
+                AttackTarget(mob)
+                task.wait(Settings.MobDelay)
+            end
+        else
+            -- Nenhum mob próximo, aguarda um pouco
+            task.wait(0.5)
+        end
+    end
+end
+
+-- ========== INTERFACE ==========
 
 local Window = Rayfield:CreateWindow({
-    Name = "NCHub Lite",
+    Name = "NCHub - Raid & Mob Farm",
     LoadingTitle = "Carregando...",
     LoadingSubtitle = "by NCMine",
     ConfigurationSaving = { Enabled = false },
     KeySystem = false
 })
 
--- Aba principal
-local MainTab = Window:CreateTab("⚔️ Combat", 4483362458)
+-- Aba Raid Farm
+local RaidTab = Window:CreateTab("⚔️ Raid Farm", 4483362458)
 
--- Kill Aura
-MainTab:CreateToggle({
-    Name = "🔪 Kill Aura",
+RaidTab:CreateToggle({
+    Name = "🎯 Farm na Raid (ativo apenas dentro)",
     CurrentValue = false,
     Callback = function(value)
-        Settings.KillAura = value
+        Settings.RaidFarm = value
         if value then
-            task.spawn(KillAuraLoop)
+            task.spawn(RaidFarmLoop)
+            Rayfield:Notify({Title = "Raid Farm", Content = "Ativado! Entre na raid.", Duration = 3})
+        else
+            Rayfield:Notify({Title = "Raid Farm", Content = "Desativado.", Duration = 2})
         end
     end
 })
 
-MainTab:CreateSlider({
-    Name = "📏 Alcance",
-    Range = {50, 250},
-    Increment = 5,
-    Suffix = "studs",
-    CurrentValue = 150,
+RaidTab:CreateToggle({
+    Name = "🪷 Modo Buda (ficar na cabeça do boss)",
+    CurrentValue = false,
     Callback = function(value)
-        Settings.KillAuraRange = value
+        Settings.BuddhaMode = value
+        if value then
+            Rayfield:Notify({Title = "Modo Buda", Content = "Ativado. Você será teleportado para a cabeça do boss.", Duration = 3})
+        else
+            Rayfield:Notify({Title = "Modo Buda", Content = "Desativado. Farm normal.", Duration = 2})
+        end
     end
 })
 
-MainTab:CreateSlider({
-    Name = "⏱️ Delay (segundos)",
+RaidTab:CreateButton({
+    Name = "ℹ️ Instruções",
+    Callback = function()
+        Rayfield:Notify({
+            Title = "Instruções",
+            Content = "1. Entre na raid manualmente.\n2. Ative 'Farm na Raid'.\n3. Se for Buda, ative o modo especial.\n4. O script atacará automaticamente os mobs.",
+            Duration = 8
+        })
+    end
+})
+
+-- Aba Mob Farm
+local MobTab = Window:CreateTab("🏝️ Mob Farm", 4483362458)
+
+MobTab:CreateToggle({
+    Name = "🤖 Auto Mob Farm",
+    CurrentValue = false,
+    Callback = function(value)
+        Settings.MobFarm = value
+        if value then
+            task.spawn(MobFarmLoop)
+            Rayfield:Notify({Title = "Mob Farm", Content = "Ativado. Farmando em " .. Settings.SelectedIsland, Duration = 3})
+        else
+            Rayfield:Notify({Title = "Mob Farm", Content = "Desativado.", Duration = 2})
+        end
+    end
+})
+
+-- Dropdown para selecionar ilha
+local islandNames = {}
+for _, island in ipairs(Islands) do
+    table.insert(islandNames, island[1])
+end
+
+MobTab:CreateDropdown({
+    Name = "🏝️ Selecionar Ilha",
+    Options = islandNames,
+    CurrentOption = Settings.SelectedIsland,
+    Callback = function(option)
+        Settings.SelectedIsland = option
+        Rayfield:Notify({Title = "Ilha", Content = "Ilha selecionada: " .. option, Duration = 2})
+    end
+})
+
+MobTab:CreateToggle({
+    Name = "🚀 Teleportar ao iniciar",
+    CurrentValue = true,
+    Callback = function(value)
+        Settings.TeleportOnStart = value
+    end
+})
+
+MobTab:CreateButton({
+    Name = "📍 Teleportar agora",
+    Callback = function()
+        for _, island in ipairs(Islands) do
+            if island[1] == Settings.SelectedIsland then
+                TeleportTo(island[2])
+                Rayfield:Notify({Title = "Teleport", Content = "Teleportado para " .. island[1], Duration = 2})
+                break
+            end
+        end
+    end
+})
+
+MobTab:CreateSlider({
+    Name = "📏 Alcance de ataque",
+    Range = {30, 200},
+    Increment = 5,
+    Suffix = "studs",
+    CurrentValue = Settings.MobRange,
+    Callback = function(value)
+        Settings.MobRange = value
+    end
+})
+
+MobTab:CreateSlider({
+    Name = "⏱️ Delay entre ataques",
     Range = {0.05, 0.5},
     Increment = 0.05,
     Suffix = "s",
-    CurrentValue = 0.1,
+    CurrentValue = Settings.MobDelay,
     Callback = function(value)
-        Settings.KillAuraDelay = value
-    end
-})
-
-MainTab:CreateDivider()
-
--- Auto Fruit
-MainTab:CreateToggle({
-    Name = "🍎 Auto Fruit",
-    CurrentValue = false,
-    Callback = function(value)
-        Settings.AutoFruit = value
-        if value then
-            task.spawn(AutoFruitLoop)
-        end
-    end
-})
-
-MainTab:CreateDivider()
-
--- Auto Raid
-MainTab:CreateToggle({
-    Name = "⚡ Auto Raid",
-    CurrentValue = false,
-    Callback = function(value)
-        Settings.AutoRaid = value
-        if value then
-            task.spawn(AutoRaidLoop)
-        end
-    end
-})
-
-MainTab:CreateDropdown({
-    Name = "🔥 Tipo de Raid",
-    Options = {"Flame", "Ice", "Sand", "Dark", "Light", "Magma", "Water"},
-    CurrentOption = "Flame",
-    Callback = function(option)
-        Settings.RaidType = option
+        Settings.MobDelay = value
     end
 })
 
 -- Notificação inicial
 Rayfield:Notify({
-    Title = "NCHub Lite",
-    Content = "Carregado! Kill Aura e Auto Fruit funcionais.",
+    Title = "NCHub",
+    Content = "Pronto! Use as abas Raid Farm ou Mob Farm.",
     Duration = 5
 })
-
-print("NCHub Lite carregado | Kill Aura, Auto Fruit, Auto Raid prontos.")
