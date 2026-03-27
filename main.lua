@@ -1,181 +1,248 @@
 --[[
-    NCHub Minimalista - Blox Fruits
-    Foco: Leveza, Estabilidade e Funcionalidade
+    NCHub Lite – Feito por NCMine
+    Funcionalidades: Kill Aura, Auto Fruit, Auto Raid
+    Versão otimizada para mobile (Delta)
 ]]
 
-local OrionLib = loadstring(game:HttpGet(('https://raw.githubusercontent.com/shlexsoftware/Orion/main/source')))()
-local Players = game:GetService("Players")
-local LocalPlayer = Players.LocalPlayer
-local VirtualUser = game:GetService("VirtualUser")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
--- Configurações Ativas
-local _G = {
+-- ========== CONFIGURAÇÕES ==========
+local Settings = {
     KillAura = false,
+    KillAuraRange = 150,
+    KillAuraDelay = 0.1,
     AutoFruit = false,
     AutoRaid = false,
-    RaidType = "Flame"
+    RaidType = "Flame",
 }
 
--- ==========================================
--- 🛡️ SISTEMA ANTI-AFK (NÃO DEIXA O JOGO FECHAR)
--- ==========================================
-LocalPlayer.Idled:Connect(function()
-    VirtualUser:Button2Down(Vector2.new(0,0),workspace.CurrentCamera.CFrame)
-    task.wait(1)
-    VirtualUser:Button2Up(Vector2.new(0,0),workspace.CurrentCamera.CFrame)
-end)
+-- ========== SERVIÇOS ==========
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
--- ==========================================
--- ⚔️ FUNÇÕES DE COMBATE E COLETA
--- ==========================================
+-- ========== FUNÇÕES AUXILIARES ==========
 
--- Equipa a arma melee automaticamente
-local function EquipWeapon()
-    for _, tool in ipairs(LocalPlayer.Backpack:GetChildren()) do
-        if tool.ToolTip == "Melee" or tool.ToolTip == "Sword" then
-            tool.Parent = LocalPlayer.Character
-            break
+-- Encontra o mob mais próximo dentro do alcance
+local function GetNearestMob()
+    local character = LocalPlayer.Character
+    if not character then return nil end
+    local rootPart = character:FindFirstChild("HumanoidRootPart")
+    if not rootPart then return nil end
+
+    local nearest = nil
+    local minDist = math.huge
+
+    for _, v in ipairs(workspace:GetDescendants()) do
+        if v:IsA("Model") and v:FindFirstChild("Humanoid") and v.Humanoid.Health > 0 then
+            local hrp = v:FindFirstChild("HumanoidRootPart")
+            if hrp then
+                local dist = (hrp.Position - rootPart.Position).Magnitude
+                if dist < minDist and dist <= Settings.KillAuraRange then
+                    nearest = v
+                    minDist = dist
+                end
+            end
         end
+    end
+    return nearest
+end
+
+-- Ataca o alvo usando a arma equipada
+local function AttackTarget(target)
+    if not target then return end
+
+    local character = LocalPlayer.Character
+    if not character then return end
+
+    -- Aproxima-se do alvo
+    local rootPart = character:FindFirstChild("HumanoidRootPart")
+    local targetRoot = target:FindFirstChild("HumanoidRootPart")
+    if rootPart and targetRoot then
+        rootPart.CFrame = targetRoot.CFrame * CFrame.new(0, 0, 3)
+    end
+
+    -- Procura a ferramenta (arma) equipada
+    local tool = character:FindFirstChildOfClass("Tool")
+    if tool then
+        -- Ativa a ferramenta (simula o clique)
+        tool:Activate()
     end
 end
 
--- Ataca o alvo de forma segura
-local function Attack(target)
-    pcall(function()
-        local char = LocalPlayer.Character
-        if char and char:FindFirstChild("HumanoidRootPart") and target:FindFirstChild("HumanoidRootPart") then
-            -- Fica acima do inimigo para não apanhar
-            char.HumanoidRootPart.CFrame = target.HumanoidRootPart.CFrame * CFrame.new(0, 7, 0)
-            char.HumanoidRootPart.Velocity = Vector3.new(0, 0, 0) -- Evita ser jogado longe
-            
-            EquipWeapon()
-            game:GetService("VirtualUser"):ClickButton1(Vector2.new(0, 0))
+-- Encontra a fruta mais próxima
+local function GetNearestFruit()
+    local character = LocalPlayer.Character
+    if not character then return nil end
+    local rootPart = character:FindFirstChild("HumanoidRootPart")
+    if not rootPart then return nil end
+
+    local nearest = nil
+    local minDist = math.huge
+
+    for _, v in ipairs(workspace:GetDescendants()) do
+        if v:IsA("Model") and v:FindFirstChild("Handle") then
+            if v.Name:find("Fruit") then
+                local fruitPart = v:FindFirstChild("Handle") or v:FindFirstChild("PrimaryPart")
+                if fruitPart then
+                    local dist = (fruitPart.Position - rootPart.Position).Magnitude
+                    if dist < minDist and dist <= 100 then -- alcance fixo para frutas
+                        nearest = v
+                        minDist = dist
+                    end
+                end
+            end
         end
-    end)
+    end
+    return nearest
 end
 
--- ==========================================
--- 🔄 LOOPS PRINCIPAIS
--- ==========================================
+-- Coleta a fruta (teleporta e espera)
+local function CollectFruit(fruit)
+    if not fruit then return end
+    local character = LocalPlayer.Character
+    if not character then return end
 
--- Loop Kill Aura
-task.spawn(function()
-    while task.wait(0.1) do
-        if _G.KillAura then
-            pcall(function()
-                for _, enemy in pairs(workspace.Enemies:GetChildren()) do
-                    if enemy:FindFirstChild("Humanoid") and enemy.Humanoid.Health > 0 then
-                        Attack(enemy)
-                        break -- Foca em um por vez
-                    end
-                end
-            end)
+    local rootPart = character:FindFirstChild("HumanoidRootPart")
+    local fruitPart = fruit:FindFirstChild("Handle") or fruit:FindFirstChild("PrimaryPart")
+    if rootPart and fruitPart then
+        -- Teleporta em cima da fruta
+        rootPart.CFrame = fruitPart.CFrame * CFrame.new(0, 2, 0)
+        -- Aguarda um pouco para o jogo registrar a coleta
+        task.wait(0.5)
+        -- Opcional: simular um movimento para garantir
+        rootPart.CFrame = fruitPart.CFrame
+    end
+end
+
+-- ========== LOOPS ==========
+
+-- Kill Aura loop
+local function KillAuraLoop()
+    while Settings.KillAura do
+        local target = GetNearestMob()
+        if target then
+            AttackTarget(target)
+        end
+        task.wait(Settings.KillAuraDelay)
+    end
+end
+
+-- Auto Fruit loop
+local function AutoFruitLoop()
+    while Settings.AutoFruit do
+        local fruit = GetNearestFruit()
+        if fruit then
+            CollectFruit(fruit)
+        end
+        task.wait(0.5)
+    end
+end
+
+-- Auto Raid loop
+local function AutoRaidLoop()
+    while Settings.AutoRaid do
+        -- Inicia a raid
+        local success, err = pcall(function()
+            ReplicatedStorage.Remotes.CommF_:InvokeServer("Raids", "Start", Settings.RaidType)
+        end)
+        if not success then
+            warn("Erro ao iniciar raid: " .. tostring(err))
+        end
+        -- Aguarda antes de tentar novamente
+        task.wait(30) -- espera 30 segundos antes de tentar outra raid
+    end
+end
+
+-- ========== CONSTRUÇÃO DA UI ==========
+
+local Window = Rayfield:CreateWindow({
+    Name = "NCHub Lite",
+    LoadingTitle = "Carregando...",
+    LoadingSubtitle = "by NCMine",
+    ConfigurationSaving = { Enabled = false },
+    KeySystem = false
+})
+
+-- Aba principal
+local MainTab = Window:CreateTab("⚔️ Combat", 4483362458)
+
+-- Kill Aura
+MainTab:CreateToggle({
+    Name = "🔪 Kill Aura",
+    CurrentValue = false,
+    Callback = function(value)
+        Settings.KillAura = value
+        if value then
+            task.spawn(KillAuraLoop)
         end
     end
-end)
+})
 
--- Loop Coletar e Guardar Fruta
-task.spawn(function()
-    while task.wait(1) do
-        if _G.AutoFruit then
-            pcall(function()
-                local char = LocalPlayer.Character
-                -- 1. Coleta a fruta no chão
-                for _, item in pairs(workspace:GetChildren()) do
-                    if item:IsA("Tool") and item.Name:find("Fruit") then
-                        char.HumanoidRootPart.CFrame = item.Handle.CFrame
-                        task.wait(0.5)
-                    end
-                end
-                
-                -- 2. Guarda a fruta no inventário (Armazém)
-                for _, tool in pairs(char:GetChildren()) do
-                    if tool:IsA("Tool") and tool.Name:find("Fruit") then
-                        ReplicatedStorage.Remotes.CommF_:InvokeServer("StoreFruit", tool:GetAttribute("OriginalName") or tool.Name)
-                    end
-                end
-                for _, tool in pairs(LocalPlayer.Backpack:GetChildren()) do
-                    if tool:IsA("Tool") and tool.Name:find("Fruit") then
-                        ReplicatedStorage.Remotes.CommF_:InvokeServer("StoreFruit", tool:GetAttribute("OriginalName") or tool.Name)
-                    end
-                end
-            end)
+MainTab:CreateSlider({
+    Name = "📏 Alcance",
+    Range = {50, 250},
+    Increment = 5,
+    Suffix = "studs",
+    CurrentValue = 150,
+    Callback = function(value)
+        Settings.KillAuraRange = value
+    end
+})
+
+MainTab:CreateSlider({
+    Name = "⏱️ Delay (segundos)",
+    Range = {0.05, 0.5},
+    Increment = 0.05,
+    Suffix = "s",
+    CurrentValue = 0.1,
+    Callback = function(value)
+        Settings.KillAuraDelay = value
+    end
+})
+
+MainTab:CreateDivider()
+
+-- Auto Fruit
+MainTab:CreateToggle({
+    Name = "🍎 Auto Fruit",
+    CurrentValue = false,
+    Callback = function(value)
+        Settings.AutoFruit = value
+        if value then
+            task.spawn(AutoFruitLoop)
         end
     end
-end)
+})
 
--- Loop Auto Raid
-task.spawn(function()
-    while task.wait(1) do
-        if _G.AutoRaid then
-            pcall(function()
-                -- Tenta comprar o chip e iniciar (precisa de fragmentos/dinheiro)
-                ReplicatedStorage.Remotes.CommF_:InvokeServer("Raids", "Start", _G.RaidType)
-                
-                -- Se estiver dentro da raid, mata os bichos
-                if workspace:FindFirstChild("Enemies") then
-                    for _, enemy in pairs(workspace.Enemies:GetChildren()) do
-                        if enemy:FindFirstChild("Humanoid") and enemy.Humanoid.Health > 0 then
-                            Attack(enemy)
-                        end
-                    end
-                end
-            end)
+MainTab:CreateDivider()
+
+-- Auto Raid
+MainTab:CreateToggle({
+    Name = "⚡ Auto Raid",
+    CurrentValue = false,
+    Callback = function(value)
+        Settings.AutoRaid = value
+        if value then
+            task.spawn(AutoRaidLoop)
         end
     end
-end)
-
--- ==========================================
--- 🎨 INTERFACE MINIMALISTA (ORION)
--- ==========================================
-
-local Window = OrionLib:MakeWindow({
-    Name = "NCHub Lite", 
-    HidePremium = false, 
-    SaveConfig = false, 
-    IntroText = "Carregando NCHub..."
 })
 
-local MainTab = Window:MakeTab({
-    Name = "Principal",
-    Icon = "rbxassetid://4483345998",
-    PremiumOnly = false
-})
-
-MainTab:AddToggle({
-    Name = "⚔️ Kill Aura (Bater Automático)",
-    Default = false,
-    Callback = function(Value)
-        _G.KillAura = Value
-    end
-})
-
-MainTab:AddToggle({
-    Name = "🍎 Coletar & Guardar Frutas",
-    Default = false,
-    Callback = function(Value)
-        _G.AutoFruit = Value
-    end
-})
-
-MainTab:AddToggle({
-    Name = "⚡ Auto Raid (Zerar)",
-    Default = false,
-    Callback = function(Value)
-        _G.AutoRaid = Value
-    end
-})
-
-MainTab:AddDropdown({
+MainTab:CreateDropdown({
     Name = "🔥 Tipo de Raid",
-    Default = "Flame",
     Options = {"Flame", "Ice", "Sand", "Dark", "Light", "Magma", "Water"},
-    Callback = function(Value)
-        _G.RaidType = Value
+    CurrentOption = "Flame",
+    Callback = function(option)
+        Settings.RaidType = option
     end
 })
 
-MainTab:AddLabel("✔️ Anti-AFK ativado permanentemente.")
+-- Notificação inicial
+Rayfield:Notify({
+    Title = "NCHub Lite",
+    Content = "Carregado! Kill Aura e Auto Fruit funcionais.",
+    Duration = 5
+})
 
-OrionLib:Init()
+print("NCHub Lite carregado | Kill Aura, Auto Fruit, Auto Raid prontos.")
